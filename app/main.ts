@@ -13,8 +13,9 @@ interface Response {
 }
 
 let directory = "."
-if (process.argv.length == 3) {
-    directory = process.argv[2]
+if (process.argv.length == 4) {
+    directory = process.argv[3]
+    console.log({ directory })
 }
 
 const server = net.createServer(async (socket) => {
