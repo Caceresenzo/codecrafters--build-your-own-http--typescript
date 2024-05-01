@@ -43,6 +43,14 @@ const server = net.createServer(async (socket) => {
     const requestLine = await readLine()
     const [method, path, version] = requestLine.split(" ")
 
+    const headers = {}
+
+    let line;
+    while (line = await readLine()) {
+        const [key, value] = line.split(": ")
+        headers[key.toLowerCase()] = value
+    }
+
     let response: Response = {
         status: Status.NOT_FOUND
     }
@@ -53,6 +61,18 @@ const server = net.createServer(async (socket) => {
         }
     } else if (path.startsWith("/echo/")) {
         const message = path.substring(6)
+        const buffer = Buffer.from(message, "utf-8")
+
+        response = {
+            status: Status.OK,
+            headers: {
+                "Content-Type": "text/plain",
+                "Content-Length": String(buffer.length),
+            },
+            body: buffer
+        }
+    } else if (path == "/user-agent") {
+        const message = headers["User-Agent".toLowerCase()]
         const buffer = Buffer.from(message, "utf-8")
 
         response = {
