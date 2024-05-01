@@ -51,15 +51,34 @@ const server = net.createServer(async (socket) => {
         response = {
             status: Status.OK
         }
+    } else if (path.startsWith("/echo/")) {
+        const message = path.substring(6)
+        const buffer = Buffer.from(message, "utf-8")
+
+        response = {
+            status: Status.OK,
+            headers: {
+                "Content-Type": "text/plain",
+                "Content-Length": String(buffer.length),
+            },
+            body: buffer
+        }
     }
 
     socket.write(`HTTP/1.1 ${response.status}\r\n`);
+    for (const [key, value] of Object.entries(response.headers || {})) {
+        socket.write(`${key}: ${value}\r\n`);
+    }
     socket.write(`\r\n`);
+
+    if (response.body) {
+        socket.write(response.body);
+    }
+
     socket.end();
 });
 
 console.log("codecrafters build-your-own-http");
-
 server.listen(4221, 'localhost', () => {
     console.log('server is running on port 4221');
 });
