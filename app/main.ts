@@ -1,3 +1,4 @@
+import fs from 'fs';
 import * as net from 'net';
 
 enum Status {
@@ -9,6 +10,11 @@ interface Response {
     status: Status,
     headers?: Record<string, string>,
     body?: Buffer,
+}
+
+let directory = "."
+if (process.argv.length == 3) {
+    directory = process.argv[2]
 }
 
 const server = net.createServer(async (socket) => {
@@ -82,6 +88,27 @@ const server = net.createServer(async (socket) => {
                 "Content-Length": String(buffer.length),
             },
             body: buffer
+        }
+    } else if (path.startsWith("/files/")) {
+        const fileName = path.substring(7)
+        const filePath = `${directory}/${fileName}`
+
+        if (fs.existsSync(filePath)) {
+            const size = fs.statSync(filePath).size
+            const content = fs.readFileSync(filePath)
+
+            response = {
+                status: Status.OK,
+                headers: {
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": String(size),
+                },
+                body: content
+            }
+        } else {
+            response = {
+                status: Status.NOT_FOUND
+            }
         }
     }
 
