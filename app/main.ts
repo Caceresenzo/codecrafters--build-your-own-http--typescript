@@ -3,6 +3,7 @@ import * as net from 'net';
 
 enum Status {
     OK = "200 OK",
+    CREATED = "201 Created",
     NOT_FOUND = "404 Not Found",
 }
 
@@ -51,11 +52,17 @@ const server = net.createServer(async (socket) => {
     const [method, path, version] = requestLine.split(" ")
 
     const headers = {}
-
     let line;
     while (line = await readLine()) {
         const [key, value] = line.split(": ")
         headers[key.toLowerCase()] = value
+    }
+    
+    const isPost = method == "POST"
+    let body: Buffer | null = null
+    if (isPost) {
+        const contentLength = parseInt(headers["Content-Length".toLowerCase()] || 0)
+        body = await readBytes(contentLength)
     }
 
     let response: Response = {
@@ -94,7 +101,13 @@ const server = net.createServer(async (socket) => {
         const fileName = path.substring(7)
         const filePath = `${directory}/${fileName}`
 
-        if (fs.existsSync(filePath)) {
+        if (isPost) {
+            fs.writeFileSync(filePath, body!)
+
+            response = {
+                status: Status.CREATED
+            }
+        } else if (fs.existsSync(filePath)) {
             const size = fs.statSync(filePath).size
             const content = fs.readFileSync(filePath)
 
