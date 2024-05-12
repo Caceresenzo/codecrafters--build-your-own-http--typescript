@@ -81,7 +81,6 @@ const server = net.createServer(async (socket) => {
             status: Status.OK,
             headers: {
                 "Content-Type": "text/plain",
-                "Content-Length": String(buffer.length),
             },
             body: buffer
         }
@@ -93,7 +92,6 @@ const server = net.createServer(async (socket) => {
             status: Status.OK,
             headers: {
                 "Content-Type": "text/plain",
-                "Content-Length": String(buffer.length),
             },
             body: buffer
         }
@@ -108,14 +106,12 @@ const server = net.createServer(async (socket) => {
                 status: Status.CREATED
             }
         } else if (fs.existsSync(filePath)) {
-            const size = fs.statSync(filePath).size
             const content = fs.readFileSync(filePath)
 
             response = {
                 status: Status.OK,
                 headers: {
                     "Content-Type": "application/octet-stream",
-                    "Content-Length": String(size),
                 },
                 body: content
             }
@@ -130,6 +126,11 @@ const server = net.createServer(async (socket) => {
     for (const [key, value] of Object.entries(response.headers || {})) {
         socket.write(`${key}: ${value}\r\n`);
     }
+
+    if (response.body) {
+        socket.write(`Content-Length: ${response.body.length}\r\n`);
+    }
+
     socket.write(`\r\n`);
 
     if (response.body) {
