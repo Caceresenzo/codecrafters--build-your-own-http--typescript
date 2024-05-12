@@ -19,6 +19,10 @@ if (process.argv.length == 4) {
     console.log({ directory })
 }
 
+function gzip(buffer: Buffer) {
+    return buffer;
+}
+
 const server = net.createServer(async (socket) => {
     async function readable(): Promise<{}> {
         return new Promise((resolve) => socket.on('readable', resolve));
@@ -57,7 +61,7 @@ const server = net.createServer(async (socket) => {
         const [key, value] = line.split(": ")
         headers[key.toLowerCase()] = value
     }
-    
+
     const isPost = method == "POST"
     let body: Buffer | null = null
     if (isPost) {
@@ -120,6 +124,27 @@ const server = net.createServer(async (socket) => {
                 status: Status.NOT_FOUND
             }
         }
+    }
+
+    const acceptEncoding: string = headers["Accept-Encoding".toLowerCase()] || ""
+    let encoder: ((buffer: Buffer) => Buffer) | null = null
+    for (let name of acceptEncoding.split(",")) {
+        name = name.trim()
+
+        if (name == "gzip") {
+            encoder = gzip;
+            break
+        }
+    }
+
+    if (encoder != null && response.body) {
+        response.body = encoder(response.body)
+
+        if (!response.headers) {
+            response.headers = {}
+        }
+
+        response.headers["Content-Encoding"] = encoder.name
     }
 
     socket.write(`HTTP/1.1 ${response.status}\r\n`);
