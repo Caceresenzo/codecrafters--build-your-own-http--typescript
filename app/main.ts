@@ -1,5 +1,6 @@
 import fs from 'fs';
 import * as net from 'net';
+import zlib from "zlib";
 
 enum Status {
     OK = "200 OK",
@@ -20,7 +21,7 @@ if (process.argv.length == 4) {
 }
 
 function gzip(buffer: Buffer) {
-    return buffer;
+    return zlib.gzipSync(buffer)
 }
 
 const server = net.createServer(async (socket) => {
