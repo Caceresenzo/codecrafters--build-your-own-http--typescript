@@ -30,7 +30,7 @@ type Request = (
 
 interface Response {
     status: Status,
-    headers?: Record<string, string>,
+    headers: Record<string, string>,
     body?: Buffer,
 }
 
@@ -122,7 +122,8 @@ const server = net.createServer(async (socket) => {
     async function route(request: Request): Promise<Response> {
         if (request.path == "/") {
             return {
-                status: Status.OK
+                status: Status.OK,
+                headers: {},
             }
         } else if (request.path.startsWith("/echo/")) {
             const message = request.path.substring(6)
@@ -154,7 +155,8 @@ const server = net.createServer(async (socket) => {
                 fs.writeFileSync(filePath, request.body)
 
                 return {
-                    status: Status.CREATED
+                    status: Status.CREATED,
+                    headers: {},
                 }
             } else if (fs.existsSync(filePath)) {
                 const content = fs.readFileSync(filePath)
@@ -170,7 +172,8 @@ const server = net.createServer(async (socket) => {
         }
 
         return {
-            status: Status.NOT_FOUND
+            status: Status.NOT_FOUND,
+            headers: {},
         }
     }
 
@@ -200,6 +203,12 @@ const server = net.createServer(async (socket) => {
         return response
     }
 
+    function shoudCloseConnection(request: Request): boolean {
+        const connection = request.headers["Connection"]
+
+        return !connection || connection == "close"
+    }
+
     async function writeResponse(response: Response) {
         socket.write(`HTTP/1.1 ${response.status}\r\n`)
         for (const [key, value] of Object.entries(response.headers || {})) {
@@ -227,11 +236,20 @@ const server = net.createServer(async (socket) => {
         }
 
         let response = await route(request)
+        console.log(`${socketId}: ${request.method} ${request.path} ${response.status}`)
+
         response = await encode(request, response)
+
+        const shoudClose = shoudCloseConnection(request)
+        if (shoudClose) {
+            response.headers["Connection"] = "close"
+        }
 
         await writeResponse(response)
 
-        console.log(`${request.method} ${request.path} ${response.status}`)
+        if (shoudClose) {
+            break
+        }
     }
     console.log(`${socketId}: disconnected`)
 
