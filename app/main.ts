@@ -1,12 +1,32 @@
-import fs from 'fs';
-import * as net from 'net';
-import zlib from "zlib";
+import fs from 'fs'
+import * as net from 'net'
+import zlib from "zlib"
 
 enum Status {
     OK = "200 OK",
     CREATED = "201 Created",
     NOT_FOUND = "404 Not Found",
 }
+
+enum Method {
+    GET = "GET",
+    POST = "POST",
+}
+
+type Request = (
+    {
+        path: string
+        version: string
+        headers: Record<string, string>,
+    } & (
+        {
+            method: Method.GET
+        } | {
+            method: Method.POST
+            body: Buffer
+        }
+    )
+)
 
 interface Response {
     status: Status,
@@ -24,21 +44,25 @@ function gzip(buffer: Buffer) {
     return zlib.gzipSync(buffer)
 }
 
+let socketIdIncrement = 0
+
 const server = net.createServer(async (socket) => {
     async function readable(): Promise<{}> {
-        return new Promise((resolve) => socket.on('readable', resolve));
+        return new Promise((resolve) => socket.on('readable', resolve))
     }
 
-    async function readBytes(n: number = 0): Promise<Buffer> {
-        const buffer = socket.read(n);
+    async function readBytes(n: number = 0, awaitIfNull = true): Promise<Buffer> {
+        const buffer = socket.read(n)
         if (buffer) {
-            return new Promise<Buffer>((resolve) => resolve(buffer));
+            return new Promise<Buffer>((resolve) => resolve(buffer))
         }
 
-        return new Promise<Buffer>(async (resolve) => {
-            await readable()
-            readBytes(n).then(resolve)
-        });
+        if (!awaitIfNull) {
+            return Promise.resolve(Buffer.alloc(0))
+        }
+
+        await readable()
+        return readBytes(n, false)
     }
 
     async function readLine() {
@@ -46,127 +70,175 @@ const server = net.createServer(async (socket) => {
         let line = ""
 
         do {
-            character = String.fromCharCode((await readBytes(1))[0])
+            const buffer = await readBytes(1)
+            if (!buffer.length) {
+                return line
+            }
+
+            character = String.fromCharCode(buffer[0])
             line += character
-        } while (character != '\n');
+        } while (character != '\n')
 
         return line.substring(0, line.length - 2)
     }
 
-    const requestLine = await readLine()
-    const [method, path, version] = requestLine.split(" ")
-
-    const headers = {}
-    let line;
-    while (line = await readLine()) {
-        const [key, value] = line.split(": ")
-        headers[key.toLowerCase()] = value
-    }
-
-    const isPost = method == "POST"
-    let body: Buffer | null = null
-    if (isPost) {
-        const contentLength = parseInt(headers["Content-Length".toLowerCase()] || 0)
-        body = await readBytes(contentLength)
-    }
-
-    let response: Response = {
-        status: Status.NOT_FOUND
-    }
-
-    if (path == "/") {
-        response = {
-            status: Status.OK
+    async function parseRequest(): Promise<Request | null> {
+        const requestLine = await readLine()
+        if (!requestLine) {
+            return Promise.resolve(null)
         }
-    } else if (path.startsWith("/echo/")) {
-        const message = path.substring(6)
-        const buffer = Buffer.from(message, "utf-8")
 
-        response = {
-            status: Status.OK,
-            headers: {
-                "Content-Type": "text/plain",
-            },
-            body: buffer
+        const [method, path, version] = requestLine.split(" ")
+
+        const headers = {}
+        let line: string
+        while (line = await readLine()) {
+            const [key, value] = line.split(": ")
+            headers[key.toLowerCase()] = value
         }
-    } else if (path == "/user-agent") {
-        const message = headers["User-Agent".toLowerCase()]
-        const buffer = Buffer.from(message, "utf-8")
 
-        response = {
-            status: Status.OK,
-            headers: {
-                "Content-Type": "text/plain",
-            },
-            body: buffer
-        }
-    } else if (path.startsWith("/files/")) {
-        const fileName = path.substring(7)
-        const filePath = `${directory}/${fileName}`
-
-        if (isPost) {
-            fs.writeFileSync(filePath, body!)
-
-            response = {
-                status: Status.CREATED
+        const isPost = method == "POST"
+        if (!isPost) {
+            return {
+                method: Method.GET,
+                path,
+                version,
+                headers
             }
-        } else if (fs.existsSync(filePath)) {
-            const content = fs.readFileSync(filePath)
+        }
 
-            response = {
+        const contentLength = parseInt(headers["Content-Length".toLowerCase()] || 0)
+        const body = await readBytes(contentLength)
+
+        return {
+            method: Method.POST,
+            path,
+            version,
+            headers,
+            body
+        }
+    }
+
+    async function route(request: Request): Promise<Response> {
+        if (request.path == "/") {
+            return {
+                status: Status.OK
+            }
+        } else if (request.path.startsWith("/echo/")) {
+            const message = request.path.substring(6)
+            const buffer = Buffer.from(message, "utf-8")
+
+            return {
                 status: Status.OK,
                 headers: {
-                    "Content-Type": "application/octet-stream",
+                    "Content-Type": "text/plain",
                 },
-                body: content
+                body: buffer
             }
-        } else {
-            response = {
-                status: Status.NOT_FOUND
+        } else if (request.path == "/user-agent") {
+            const message = request.headers["User-Agent".toLowerCase()]
+            const buffer = Buffer.from(message, "utf-8")
+
+            return {
+                status: Status.OK,
+                headers: {
+                    "Content-Type": "text/plain",
+                },
+                body: buffer
             }
+        } else if (request.path.startsWith("/files/")) {
+            const fileName = request.path.substring(7)
+            const filePath = `${directory}/${fileName}`
+
+            if (request.method == Method.POST) {
+                fs.writeFileSync(filePath, request.body)
+
+                return {
+                    status: Status.CREATED
+                }
+            } else if (fs.existsSync(filePath)) {
+                const content = fs.readFileSync(filePath)
+
+                return {
+                    status: Status.OK,
+                    headers: {
+                        "Content-Type": "application/octet-stream",
+                    },
+                    body: content
+                }
+            }
+        }
+
+        return {
+            status: Status.NOT_FOUND
         }
     }
 
-    const acceptEncoding: string = headers["Accept-Encoding".toLowerCase()] || ""
-    let encoder: ((buffer: Buffer) => Buffer) | null = null
-    for (let name of acceptEncoding.split(",")) {
-        name = name.trim()
+    async function encode(request: Request, response: Response): Promise<Response> {
+        const acceptEncoding: string = request.headers["Accept-Encoding".toLowerCase()] || ""
 
-        if (name == "gzip") {
-            encoder = gzip;
+        let encoder: ((buffer: Buffer) => Buffer) | null = null
+        for (let name of acceptEncoding.split(",")) {
+            name = name.trim()
+
+            if (name == "gzip") {
+                encoder = gzip
+                break
+            }
+        }
+
+        if (encoder != null && response.body) {
+            response.body = encoder(response.body)
+
+            if (!response.headers) {
+                response.headers = {}
+            }
+
+            response.headers["Content-Encoding"] = encoder.name
+        }
+
+        return response
+    }
+
+    async function writeResponse(response: Response) {
+        socket.write(`HTTP/1.1 ${response.status}\r\n`)
+        for (const [key, value] of Object.entries(response.headers || {})) {
+            socket.write(`${key}: ${value}\r\n`)
+        }
+
+        if (response.body) {
+            socket.write(`Content-Length: ${response.body.length}\r\n`)
+        }
+
+        socket.write(`\r\n`)
+
+        if (response.body) {
+            socket.write(response.body)
+        }
+    }
+
+    const socketId = ++socketIdIncrement
+
+    console.log(`${socketId}: connected`)
+    while (socket.readyState === "open") {
+        const request = await parseRequest()
+        if (!request) {
             break
         }
+
+        let response = await route(request)
+        response = await encode(request, response)
+
+        await writeResponse(response)
+
+        console.log(`${request.method} ${request.path} ${response.status}`)
     }
+    console.log(`${socketId}: disconnected`)
 
-    if (encoder != null && response.body) {
-        response.body = encoder(response.body)
+    socket.end()
+})
 
-        if (!response.headers) {
-            response.headers = {}
-        }
-
-        response.headers["Content-Encoding"] = encoder.name
-    }
-
-    socket.write(`HTTP/1.1 ${response.status}\r\n`);
-    for (const [key, value] of Object.entries(response.headers || {})) {
-        socket.write(`${key}: ${value}\r\n`);
-    }
-
-    if (response.body) {
-        socket.write(`Content-Length: ${response.body.length}\r\n`);
-    }
-
-    socket.write(`\r\n`);
-
-    if (response.body) {
-        socket.write(response.body);
-    }
-
-    socket.end();
-});
-
-console.log("codecrafters build-your-own-http");
+console.log("codecrafters build-your-own-http")
 server.listen(4221, 'localhost', () => {
-    console.log('server is running on port 4221');
-});
+    console.log('server is running on port 4221')
+})
